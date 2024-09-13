@@ -12,6 +12,8 @@ import scipy.stats
 from numpy.typing import ArrayLike
 from pandas import DataFrame, Series
 from sklearn.model_selection import LeaveOneGroupOut, RepeatedKFold, RepeatedStratifiedKFold, train_test_split
+from sklearn.model_selection import RepeatedKFold, RepeatedStratifiedKFold, LeaveOneGroupOut, BaseCrossValidator, KFold
+
 
 from autogluon.common.utils.resource_utils import ResourceManager
 
@@ -32,25 +34,115 @@ from .miscs import warning_filter
 logger = logging.getLogger(__name__)
 
 
+class TimeSeriesKFoldEmbargoPurging(BaseCrossValidator):
+    def __init__(self, n_splits=5, purge_gap=10, ensure_consistent_train_size=False):
+        self.n_splits = n_splits
+        self.purge_gap = purge_gap
+        self.embargo = 2 * purge_gap  # Embargo period is set to twice the purge gap
+        self.ensure_consistent_train_size = ensure_consistent_train_size  # New argument to control train size adjustment
+
+    def split(self, X, y=None, groups=None):
+        n_samples = X.shape[0]
+        indices = np.arange(n_samples)
+
+        # Determine fold sizes to ensure each fold has roughly the same number of samples
+        fold_sizes = (n_samples // self.n_splits) * np.ones(self.n_splits, dtype=int)
+        fold_sizes[:n_samples % self.n_splits] += 1  # Distribute the remainder
+        current = 0
+
+        train_indices_list = []
+        test_indices_list = []
+        train_sizes = []
+
+        for fold_idx in range(self.n_splits):
+            start, stop = current, current + fold_sizes[fold_idx]
+            test_index = indices[start:stop]
+            current = stop
+
+            test_start = test_index[0]
+            test_end = test_index[-1]
+
+            # Apply purge gap before the test set
+            purge_start = max(0, test_start - self.purge_gap)
+            purge_indices = np.arange(purge_start, test_start)
+
+            # Apply embargo: remove samples within the embargo period after the test set
+            embargo_start = test_end + 1
+            embargo_end = min(n_samples, test_end + 1 + self.embargo)
+            embargo_indices = np.arange(embargo_start, embargo_end)
+
+            # Exclude test indices, purge gap, and embargo from training indices
+            excluded_indices = np.concatenate((test_index, purge_indices, embargo_indices))
+            train_indices = np.setdiff1d(indices, excluded_indices)
+
+            train_indices_list.append(train_indices)
+            test_indices_list.append(test_index)
+            train_sizes.append(len(train_indices))
+
+        if self.ensure_consistent_train_size:
+            max_train_size = max(train_sizes)
+            for i in range(self.n_splits):
+                train_indices = train_indices_list[i]
+                if len(train_indices) < max_train_size:
+                    # Available indices are before the purge gap
+                    test_start = test_indices_list[i][0]
+                    purge_start = max(0, test_start - self.purge_gap)
+                    available_indices = indices[:purge_start]
+                    # Exclude indices already in the train set
+                    available_indices = np.setdiff1d(available_indices, train_indices)
+                    additional_needed = max_train_size - len(train_indices)
+
+                    if len(available_indices) > 0:
+                        if len(available_indices) >= additional_needed:
+                            additional_indices = np.random.choice(
+                                available_indices, size=additional_needed, replace=False
+                            )
+                        else:
+                            # If not enough indices, sample with replacement
+                            additional_indices = np.random.choice(
+                                available_indices, size=additional_needed, replace=True
+                            )
+                        train_indices = np.concatenate((train_indices, additional_indices))
+                        train_indices = np.sort(np.unique(train_indices))
+                    # If no available indices, train_indices remain as is
+
+                    train_indices_list[i] = train_indices
+
+        for train_indices, test_indices in zip(train_indices_list, test_indices_list):
+            yield train_indices, test_indices
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        return self.n_splits
+
+
+
 class CVSplitter:
     def __init__(self, splitter_cls=None, n_splits=5, n_repeats=1, random_state=0, stratified=False, groups=None):
-        self.n_splits = n_splits
-        self.n_repeats = n_repeats
-        self.random_state = random_state
         self.stratified = stratified
         self.groups = groups
+        self.random_state = random_state
+        self.n_repeats = n_repeats
+
+        if groups is not None:
+            unique_groups = pd.Series(groups).unique()
+            self.n_splits = len(unique_groups)
+
+            # Calculate average number of rows in each group
+            group_counts = pd.Series(groups).value_counts()
+            average_rows_per_group = group_counts.mean()
+
+            # Set purge_gap dynamically
+            self.purge_gap = 1500  # Figure out a way to make this dynamic!!!
+
+        # Set splitter class if not provided
         if splitter_cls is None:
             splitter_cls = self._get_splitter_cls()
+
         self._splitter = self._get_splitter(splitter_cls)
 
     def _get_splitter_cls(self):
         if self.groups is not None:
-            num_groups = len(self.groups.unique())
-            if self.n_repeats != 1:
-                raise AssertionError(f"n_repeats must be 1 when split groups are specified. (n_repeats={self.n_repeats})")
-            self.n_splits = num_groups
-            splitter_cls = LeaveOneGroupOut
-            # pass
+            splitter_cls = TimeSeriesKFoldEmbargoPurging
         elif self.stratified:
             splitter_cls = RepeatedStratifiedKFold
         else:
@@ -60,6 +152,8 @@ class CVSplitter:
     def _get_splitter(self, splitter_cls):
         if splitter_cls == LeaveOneGroupOut:
             return splitter_cls()
+        elif splitter_cls == TimeSeriesKFoldEmbargoPurging:
+            return splitter_cls(n_splits=self.n_splits, purge_gap=self.purge_gap)
         elif splitter_cls in [RepeatedKFold, RepeatedStratifiedKFold]:
             return splitter_cls(n_splits=self.n_splits, n_repeats=self.n_repeats, random_state=self.random_state)
         else:
@@ -67,9 +161,6 @@ class CVSplitter:
 
     def split(self, X, y):
         if isinstance(self._splitter, RepeatedStratifiedKFold):
-            # FIXME: There is a bug in sklearn that causes an incorrect ValueError if performing stratification and all classes have fewer than n_splits samples.
-            #  This is hacked by adding a dummy class with n_splits samples, performing the kfold split, then removing the dummy samples from all resulting indices.
-            #  This is very inefficient and complicated and ideally should be fixed in sklearn.
             with warning_filter():
                 try:
                     out = [[train_index, test_index] for train_index, test_index in self._splitter.split(X, y)]
@@ -77,15 +168,21 @@ class CVSplitter:
                     y_dummy = pd.concat([y, pd.Series([-1] * self.n_splits)], ignore_index=True)
                     X_dummy = pd.concat([X, X.head(self.n_splits)], ignore_index=True)
                     invalid_index = set(list(y_dummy.tail(self.n_splits).index))
-                    out = [[train_index, test_index] for train_index, test_index in self._splitter.split(X_dummy, y_dummy)]
+                    out = [[train_index, test_index] for train_index, test_index in
+                           self._splitter.split(X_dummy, y_dummy)]
                     len_out = len(out)
                     for i in range(len_out):
                         train_index, test_index = out[i]
                         out[i][0] = [index for index in train_index if index not in invalid_index]
                         out[i][1] = [index for index in test_index if index not in invalid_index]
             return out
+        elif isinstance(self._splitter, TimeSeriesKFoldEmbargoPurging):
+            print("--------------------- TimeSeriesKFoldEmbargoPurging split ---------------------")
+            return [[train_index, test_index] for train_index, test_index in self._splitter.split(X, y)]
         else:
-            return [[train_index, test_index] for train_index, test_index in self._splitter.split(X, y, groups=self.groups)]
+            return [[train_index, test_index] for train_index, test_index in
+                    self._splitter.split(X, y, groups=self.groups)]
+
 
 
 def setup_compute(nthreads_per_trial, ngpus_per_trial):
