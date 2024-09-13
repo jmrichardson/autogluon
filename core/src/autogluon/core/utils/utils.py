@@ -78,10 +78,11 @@ class TimeSeriesKFoldEmbargoPurging(BaseCrossValidator):
 
 class CVSplitter:
     def __init__(self, splitter_cls=None, n_splits=5, n_repeats=1, random_state=0, stratified=False, groups=None):
+        self.n_splits = n_splits
+        self.n_repeats = n_repeats
+        self.random_state = random_state
         self.stratified = stratified
         self.groups = groups
-        self.random_state = random_state
-        self.n_repeats = n_repeats
 
         if groups is not None:
             unique_groups = pd.Series(groups).unique()
@@ -91,8 +92,31 @@ class CVSplitter:
             group_counts = pd.Series(groups).value_counts()
             average_rows_per_group = group_counts.mean()
 
-            # Set purge_gap dynamically
-            self.purge_gap = 1500  # Figure out a way to make this dynamic!!!
+            # Initialize a set to store unique purge gaps
+            purge_gaps = set()
+
+            for group in unique_groups:
+                parts = group.split('_')
+                if len(parts) != 3:
+                    raise ValueError(
+                        "Group labels must be in the format '<fold>_<avg_rows_per_era>_<n_eras_purge_gap>'")
+
+                _, avg_rows, n_eras_purge_gap = parts
+                try:
+                    avg_rows = int(avg_rows)
+                    n_eras_purge_gap = int(n_eras_purge_gap)
+                except ValueError:
+                    raise ValueError(
+                        "Both <avg_rows_per_era> and <n_eras_purge_gap> must be integers in the group label.")
+
+                purge_gap = avg_rows * n_eras_purge_gap
+                purge_gaps.add(purge_gap)
+
+            if len(purge_gaps) == 1:
+                self.purge_gap = purge_gaps.pop()
+            else:
+                # If multiple purge gaps exist, take the average
+                self.purge_gap = int(np.mean(list(purge_gaps)))
 
         # Set splitter class if not provided
         if splitter_cls is None:
@@ -142,7 +166,6 @@ class CVSplitter:
         else:
             return [[train_index, test_index] for train_index, test_index in
                     self._splitter.split(X, y, groups=self.groups)]
-
 
 
 def setup_compute(nthreads_per_trial, ngpus_per_trial):
