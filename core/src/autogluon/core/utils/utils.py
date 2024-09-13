@@ -35,11 +35,10 @@ logger = logging.getLogger(__name__)
 
 
 class TimeSeriesKFoldEmbargoPurging(BaseCrossValidator):
-    def __init__(self, n_splits=5, purge_gap=10, ensure_consistent_train_size=False):
+    def __init__(self, n_splits=5, purge_gap=10):
         self.n_splits = n_splits
         self.purge_gap = purge_gap
         self.embargo = 2 * purge_gap  # Embargo period is set to twice the purge gap
-        self.ensure_consistent_train_size = ensure_consistent_train_size  # New argument to control train size adjustment
 
     def split(self, X, y=None, groups=None):
         n_samples = X.shape[0]
@@ -49,10 +48,6 @@ class TimeSeriesKFoldEmbargoPurging(BaseCrossValidator):
         fold_sizes = (n_samples // self.n_splits) * np.ones(self.n_splits, dtype=int)
         fold_sizes[:n_samples % self.n_splits] += 1  # Distribute the remainder
         current = 0
-
-        train_indices_list = []
-        test_indices_list = []
-        train_sizes = []
 
         for fold_idx in range(self.n_splits):
             start, stop = current, current + fold_sizes[fold_idx]
@@ -68,52 +63,17 @@ class TimeSeriesKFoldEmbargoPurging(BaseCrossValidator):
 
             # Apply embargo: remove samples within the embargo period after the test set
             embargo_start = test_end + 1
-            embargo_end = min(n_samples, test_end + 1 + self.embargo)
+            embargo_end = min(n_samples, test_end + self.embargo + 1)
             embargo_indices = np.arange(embargo_start, embargo_end)
 
             # Exclude test indices, purge gap, and embargo from training indices
             excluded_indices = np.concatenate((test_index, purge_indices, embargo_indices))
             train_indices = np.setdiff1d(indices, excluded_indices)
 
-            train_indices_list.append(train_indices)
-            test_indices_list.append(test_index)
-            train_sizes.append(len(train_indices))
-
-        if self.ensure_consistent_train_size:
-            max_train_size = max(train_sizes)
-            for i in range(self.n_splits):
-                train_indices = train_indices_list[i]
-                if len(train_indices) < max_train_size:
-                    # Available indices are before the purge gap
-                    test_start = test_indices_list[i][0]
-                    purge_start = max(0, test_start - self.purge_gap)
-                    available_indices = indices[:purge_start]
-                    # Exclude indices already in the train set
-                    available_indices = np.setdiff1d(available_indices, train_indices)
-                    additional_needed = max_train_size - len(train_indices)
-
-                    if len(available_indices) > 0:
-                        if len(available_indices) >= additional_needed:
-                            additional_indices = np.random.choice(
-                                available_indices, size=additional_needed, replace=False
-                            )
-                        else:
-                            # If not enough indices, sample with replacement
-                            additional_indices = np.random.choice(
-                                available_indices, size=additional_needed, replace=True
-                            )
-                        train_indices = np.concatenate((train_indices, additional_indices))
-                        train_indices = np.sort(np.unique(train_indices))
-                    # If no available indices, train_indices remain as is
-
-                    train_indices_list[i] = train_indices
-
-        for train_indices, test_indices in zip(train_indices_list, test_indices_list):
-            yield train_indices, test_indices
+            yield train_indices, test_index
 
     def get_n_splits(self, X=None, y=None, groups=None):
         return self.n_splits
-
 
 
 class CVSplitter:
