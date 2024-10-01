@@ -976,7 +976,13 @@ def compute_permutation_feature_importance(
                 fi[feature_name] = score_baseline - score
 
                 # resetting to original values for processed feature
-                X_raw.loc[row_index : row_index_end - 1, feature_list] = X[feature_list].values
+                # X_raw.loc[row_index : row_index_end - 1, feature_list] = X[feature_list].values
+                if isinstance(feature_list, str):
+                    # Single feature, reshape to (n_samples, 1)
+                    X_raw.loc[row_index: row_index_end - 1, feature_list] = X[feature_list].values.reshape(-1, 1)
+                else:
+                    # For a list of features, assign without reshaping
+                    X_raw.loc[row_index: row_index_end - 1, feature_list] = X[feature_list].values
 
                 row_index = row_index_end
         fi_dict_list.append(fi)
