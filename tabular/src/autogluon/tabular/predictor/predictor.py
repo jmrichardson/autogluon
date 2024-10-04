@@ -1666,6 +1666,7 @@ class TabularPredictor(TabularPredictorDeprecatedMixin):
         num_cpus: str | int = "auto",
         num_gpus: str | int = "auto",
         memory_limit: float | str = "auto",
+        new_target = None,
         **kwargs,
     ) -> "TabularPredictor":
         """
@@ -1808,6 +1809,10 @@ class TabularPredictor(TabularPredictorDeprecatedMixin):
 
         # TODO: Add special error message if called and training/val data was not cached.
         X, y, X_val, y_val = self._trainer.load_data()
+
+        # Enable new
+        if new_target is not None:
+            y = new_target.reindex(y.index)
 
         if y_pseudo is not None and self.problem_type in PROBLEM_TYPES_CLASSIFICATION:
             y_og = self._learner.label_cleaner.inverse_transform(y)
