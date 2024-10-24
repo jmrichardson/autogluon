@@ -591,6 +591,11 @@ class AbstractModel:
 
         self.stopping_metric = self.params_aux.get("stopping_metric", self._get_default_stopping_metric())
         self.stopping_metric = metrics.get_metric(self.stopping_metric, self.problem_type, "stopping_metric")
+
+        # add custom metric
+        if "scorer" in kwargs and kwargs['scorer'] is not None:
+            self.stopping_metric = kwargs['scorer']
+
         self.quantile_levels = self.params_aux.get("quantile_levels", None)
 
         if self.eval_metric.name in OBJECTIVES_TO_NORMALIZE:

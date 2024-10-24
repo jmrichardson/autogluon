@@ -747,16 +747,31 @@ def compute_weighted_metric(y, y_pred, metric, weights, weight_evaluation=None, 
     if weight_evaluation and weights is None:
         raise ValueError("Sample weights cannot be None when weight_evaluation=True.")
     if not weight_evaluation:
-        return metric(y, y_pred, **kwargs)
+        if hasattr(metric, 'eras'):
+            y_series = pd.Series(y, index=metric.eras.index)
+            y_pred_series = pd.Series(y_pred, index=metric.eras.index)
+            return metric(y_series, y_pred_series, eras=metric.eras, **kwargs)
+        else:
+            return metric(y, y_pred, **kwargs)
     try:
-        weighted_metric = metric(y, y_pred, sample_weight=weights, **kwargs)
+        if hasattr(metric, 'eras'):
+            y_series = pd.Series(y, index=metric.eras.index)
+            y_pred_series = pd.Series(y_pred, index=metric.eras.index)
+            return metric(y_series, y_pred_series, eras=metric.eras, sample_weight=weights, **kwargs)
+        else:
+            weighted_metric = metric(y, y_pred, sample_weight=weights, **kwargs)
     except (ValueError, TypeError, KeyError):
         if hasattr(metric, "name"):
             metric_name = metric.name
         else:
             metric_name = metric
         logger.log(30, f"WARNING: eval_metric='{metric_name}' does not support sample weights so they will be ignored in reported metric.")
-        weighted_metric = metric(y, y_pred, **kwargs)
+        if hasattr(metric, 'eras'):
+            y_series = pd.Series(y, index=metric.eras.index)
+            y_pred_series = pd.Series(y_pred, index=metric.eras.index)
+            return metric(y_series, y_pred_series, eras=metric.eras, **kwargs)
+        else:
+            weighted_metric = metric(y, y_pred, **kwargs)
     return weighted_metric
 
 

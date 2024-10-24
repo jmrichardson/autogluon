@@ -1542,6 +1542,7 @@ class AbstractTrainer:
                         **kwargs,
                     )
                     if len(models_trained) == 0:
+                        raise Exception(f"Unable to refit full!  <- JR custom logic")
                         reuse_first_fold = True
                         logger.log(
                             30,
@@ -1924,6 +1925,7 @@ class AbstractTrainer:
         check_if_best=True,
         child_hyperparameters=None,
         get_models_func=None,
+        scorer=None,
     ) -> List[str]:
         if get_models_func is None:
             get_models_func = self.construct_model_templates
@@ -1984,7 +1986,7 @@ class AbstractTrainer:
             level=level,
             time_limit=time_limit,
             ens_sample_weight=w,
-            fit_kwargs=dict(feature_metadata=feature_metadata, num_classes=self.num_classes, groups=None),  # FIXME: Is this the right way to do this?
+            fit_kwargs=dict(feature_metadata=feature_metadata, num_classes=self.num_classes, groups=None, scorer=scorer),  # FIXME: Is this the right way to do this?
         )
         for weighted_ensemble_model_name in models:
             if check_if_best and weighted_ensemble_model_name in self.get_model_names():

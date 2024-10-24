@@ -3572,7 +3572,8 @@ class TabularPredictor(TabularPredictorDeprecatedMixin):
     # TODO: Move code logic to learner/trainer
     # TODO: Add fit() arg to perform this automatically at end of training
     # TODO: Consider adding cutoff arguments such as top-k models
-    def fit_weighted_ensemble(self, base_models: list = None, name_suffix="Best", expand_pareto_frontier=False, time_limit=None, refit_full=False):
+    def fit_weighted_ensemble(self, base_models: list = None, name_suffix="Best", expand_pareto_frontier=False,
+                              time_limit=None, refit_full=False, scorer=None):
         """
         Fits new weighted ensemble models to combine predictions of previously-trained models.
         `cache_data` must have been set to `True` during the original training to enable this functionality.
@@ -3652,6 +3653,7 @@ class TabularPredictor(TabularPredictorDeprecatedMixin):
             base_model_names=base_models,
             name_suffix=name_suffix,
             time_limit=time_limit,
+            scorer=scorer,
         )
 
         if refit_full:
