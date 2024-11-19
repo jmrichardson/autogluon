@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class TimeSeriesKFoldEmbargoPurging(BaseCrossValidator):
-    def __init__(self, n_splits=5, purge_gap=10):
+    def __init__(self, n_splits=5, purge_gap=13):
         self.n_splits = n_splits
         self.purge_gap = purge_gap
         self.embargo = 2 * purge_gap  # Embargo period is set to twice the purge gap
